@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Brokers | Analise de Mercado Imobiliario</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="topbar">
+        <div class="brand-wrap">
+          <h1>BROKERS</h1>
+          <span class="status-badge">API: {{ health.status }}</span>
+        </div>
+
+        <div class="filters-wrap">
+          <select id="valuationFilter" class="filter-input">
+            <option value="geral">Gerais (todos)</option>
+            <option value="oportunidade">Oportunidades</option>
+            <option value="inflacionado">Inflacionados</option>
+          </select>
+
+          <select id="purposeFilter" class="filter-input">
+            <option value="">Finalidade (todas)</option>
+            <option value="venda">Comprar</option>
+            <option value="locacao">Alugar</option>
+          </select>
+
+          <select id="typeFilter" class="filter-input">
+            <option value="">Tipo (todos)</option>
+            <option value="hot">Alto potencial (>70)</option>
+            <option value="fair">Intermediario (40-70)</option>
+            <option value="market">Baixo potencial (<40)</option>
+          </select>
+
+          <select id="categoryFilter" class="filter-input">
+            <option value="">Categoria (todas)</option>
+          </select>
+
+          <input id="searchFilter" type="text" placeholder="Buscar bairro, cidade ou titulo..." class="filter-input search-input" />
+        </div>
+      </nav>
+
+      <section class="stats-strip">
+        <article class="mini-card">
+          <p class="mini-label">Imoveis coletados (bruto)</p>
+          <p class="mini-value">{{ analysis_summary.total_input_properties or 0 }}</p>
+        </article>
+        <article class="mini-card">
+          <p class="mini-label">Imoveis no ranking</p>
+          <p class="mini-value">{{ analysis_summary.total_analyzed_properties or analysis_summary.valid_after_outlier_filter or 0 }}</p>
+        </article>
+        <article class="mini-card">
+          <p class="mini-label">Segmentos analisados</p>
+          <p class="mini-value">{{ analysis_summary.segments_analyzed or 0 }}</p>
+        </article>
+        <article class="mini-card">
+          <p class="mini-label">Oportunidades</p>
+          <p class="mini-value">{{ analysis_summary.opportunities_found or 0 }}</p>
+        </article>
+        <article class="mini-card">
+          <p class="mini-label">Inflacionados</p>
+          <p class="mini-value">{{ analysis_summary.inflated_found or 0 }}</p>
+        </article>
+      </section>
+
+      <section class="analysis-layout">
+        <div class="map-column">
+          <div class="panel-title">Mapa de valoracao por bairro</div>
+          <div id="map"></div>
+        </div>
+
+        <aside class="side-column">
+          <div class="panel-title">Distribuicao por Rank</div>
+          <canvas id="rankChart"></canvas>
+
+          <div class="leaderboard">
+            <div class="leaderboard-header">
+              <span>Leaderboard</span>
+              <span id="leaderboardCount">0 itens</span>
+            </div>
+            <div id="leaderboardList" class="leaderboard-list"></div>
+          </div>
+        </aside>
+      </section>
+
+      <section>
+        <div class="cards-head">
+          <h2>Grid de Imoveis Analisados</h2>
+          <span id="cardsCount">0 resultados</span>
+        </div>
+        <div id="opportunitiesGrid" class="opportunities-grid"></div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script id="ranking-data" type="application/json">{{ ranking_items | tojson }}</script>
+    <script>
+      const rankingDataElement = document.getElementById("ranking-data");
+      const rawItems = rankingDataElement ? JSON.parse(rankingDataElement.textContent || "[]") : [];
+      const fallbackImage = "https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1200&q=60";
+
+      const neighborhoodCoords = {
+        "Centro": [-24.9555, -53.4552],
+        "Coqueiral": [-24.9785, -53.463],
+        "Neva": [-24.951, -53.4702],
+        "Country": [-24.942, -53.4672],
+        "Cascavel Velho": [-24.998, -53.469],
+        "Pacaembu": [-24.964, -53.489],
+        "Cancelli": [-24.9602, -53.4688],
+        "Tropical": [-24.9489, -53.435],
+      };
+
+      const chartCtx = document.getElementById("rankChart");
+      const searchFilter = document.getElementById("searchFilter");
+      const purposeFilter = document.getElementById("purposeFilter");
+      const valuationFilter = document.getElementById("valuationFilter");
+      const categoryFilter = document.getElementById("categoryFilter");
+      const typeFilter = document.getElementById("typeFilter");
+      const cardsCount = document.getElementById("cardsCount");
+      const leaderboardCount = document.getElementById("leaderboardCount");
+      const opportunitiesGrid = document.getElementById("opportunitiesGrid");
+      const leaderboardList = document.getElementById("leaderboardList");
+
+      const map = L.map("map", { zoomControl: true }).setView([-24.9555, -53.4552], 11);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+      const markersLayer = L.layerGroup().addTo(map);
+
+      const rankChart = new Chart(chartCtx, {
+        type: "bar",
+        data: {
+          labels: ["Alto", "Intermediario", "Baixo"],
+          datasets: [
+            {
+              data: [0, 0, 0],
+              backgroundColor: ["#10b981", "#f59e0b", "#94a3b8"],
+              borderRadius: 8,
+              borderSkipped: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { color: "#64748b" },
+              grid: { color: "rgba(100,116,139,0.2)" },
+            },
+            x: {
+              ticks: { color: "#334155" },
+              grid: { display: false },
+            },
+          },
+        },
+      });
+
+      function scoreBucket(score) {
+        if (score >= 70) return "hot";
+        if (score >= 40) return "fair";
+        return "market";
+      }
+
+      function scoreColor(score) {
+        if (score >= 70) return "#10b981";
+        if (score >= 40) return "#f59e0b";
+        return "#94a3b8";
+      }
+
+      function toCurrency(value) {
+        return new Intl.NumberFormat("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+          maximumFractionDigits: 0,
+        }).format(Number(value || 0));
+      }
+
+      function inferPurpose(item) {
+        if (item.transaction_type === "locacao" || item.transaction_type === "venda") {
+          return item.transaction_type;
+        }
+        const url = String(item.url || "").toLowerCase();
+        if (url.includes("/locacao/")) return "locacao";
+        if (url.includes("/venda/")) return "venda";
+        return "venda";
+      }
+
+      function purposeLabel(item) {
+        return inferPurpose(item) === "locacao" ? "Alugar" : "Comprar";
+      }
+
+      function purposeClass(item) {
+        return inferPurpose(item) === "locacao" ? "purpose-rent" : "purpose-sale";
+      }
+
+      function estimatedPriceLabel(item) {
+        return inferPurpose(item) === "locacao"
+          ? "Aluguel estimado da regiao/mês"
+          : "Valor estimado de mercado";
+      }
+
+      function inferValuationStatus(item) {
+        const status = String(item.valuation_status || "").toLowerCase();
+        if (status === "oportunidade" || status === "inflacionado" || status === "neutro") {
+          return status;
+        }
+        const score = Number(item.opportunity_score || 0);
+        if (score >= 15) return "oportunidade";
+        const premium = Number(item.premium_vs_segment_pct || 0);
+        if (premium >= 15) return "inflacionado";
+        return "neutro";
+      }
+
+      function valuationLabel(item) {
+        const status = inferValuationStatus(item);
+        if (status === "oportunidade") return "Oportunidade";
+        if (status === "inflacionado") return "Inflacionado";
+        return "Neutro";
+      }
+
+      function valuationClass(item) {
+        const status = inferValuationStatus(item);
+        if (status === "oportunidade") return "valuation-opportunity";
+        if (status === "inflacionado") return "valuation-inflated";
+        return "valuation-neutral";
+      }
+
+      function hashOffset(input) {
+        let hash = 0;
+        for (let i = 0; i < input.length; i += 1) {
+          hash = (hash << 5) - hash + input.charCodeAt(i);
+          hash |= 0;
+        }
+        const lat = -24.9555 + ((hash % 120) - 60) * 0.001;
+        const lng = -53.4552 + (((hash >> 8) % 120) - 60) * 0.001;
+        return [lat, lng];
+      }
+
+      function buildFilters() {
+        const categories = [...new Set(rawItems.map((item) => item.category).filter(Boolean))].sort();
+        categories.forEach((category) => {
+          const option = document.createElement("option");
+          option.value = category;
+          option.textContent = category;
+          categoryFilter.appendChild(option);
+        });
+      }
+
+      function applyFilters() {
+        const search = searchFilter.value.trim().toLowerCase();
+        const purpose = purposeFilter.value;
+        const valuation = valuationFilter.value;
+        const category = categoryFilter.value;
+        const type = typeFilter.value;
+
+        return rawItems.filter((item) => {
+          const score = Number(item.investment_rank_score || 0);
+          const bucket = scoreBucket(score);
+          const searchable = `${item.title || ""} ${item.neighborhood || ""} ${item.city || ""} ${purposeLabel(item)}`.toLowerCase();
+          const status = inferValuationStatus(item);
+
+          if (search && !searchable.includes(search)) return false;
+          if (purpose && inferPurpose(item) !== purpose) return false;
+          if (valuation !== "geral" && status !== valuation) return false;
+          if (category && item.category !== category) return false;
+          if (type && bucket !== type) return false;
+          return true;
+        });
+      }
+
+      function renderChart(items) {
+        const counts = { hot: 0, fair: 0, market: 0 };
+        items.forEach((item) => {
+          counts[scoreBucket(Number(item.investment_rank_score || 0))] += 1;
+        });
+        rankChart.data.datasets[0].data = [counts.hot, counts.fair, counts.market];
+        rankChart.update();
+      }
+
+      function renderMap(items) {
+        markersLayer.clearLayers();
+        const grouped = {};
+        items.forEach((item) => {
+          const key = `${item.city || ""}::${item.neighborhood || ""}`;
+          if (!grouped[key]) {
+            grouped[key] = { ...item, count: 0, scoreSum: 0 };
+          }
+          grouped[key].count += 1;
+          grouped[key].scoreSum += Number(item.investment_rank_score || 0);
+        });
+
+        Object.values(grouped).forEach((entry) => {
+          const neighborhood = entry.neighborhood || "Sem bairro";
+          const city = entry.city || "Sem cidade";
+          const avgScore = entry.scoreSum / Math.max(1, entry.count);
+          const coords = neighborhoodCoords[neighborhood] || hashOffset(`${city}-${neighborhood}`);
+          const marker = L.circleMarker(coords, {
+            radius: Math.min(18, 6 + entry.count),
+            color: scoreColor(avgScore),
+            fillColor: scoreColor(avgScore),
+            fillOpacity: 0.6,
+            weight: 2,
+          });
+          marker.bindPopup(
+            `<strong>${neighborhood}</strong><br/>Cidade: ${city}<br/>Qtd: ${entry.count}<br/>Rank medio: ${avgScore.toFixed(1)}<br/>Finalidade: ${purposeLabel(entry)}`
+          );
+          marker.addTo(markersLayer);
+        });
+      }
+
+      function renderLeaderboard(items) {
+        const top = [...items]
+          .sort((a, b) => Number(b.investment_rank_score || 0) - Number(a.investment_rank_score || 0))
+          .slice(0, 8);
+
+        leaderboardCount.textContent = `${top.length} itens`;
+        leaderboardList.innerHTML = "";
+
+        top.forEach((item, index) => {
+          const row = document.createElement("a");
+          row.className = "leader-row";
+          row.href = item.url || "#";
+          row.target = "_blank";
+          row.rel = "noopener noreferrer";
+          row.innerHTML = `
+            <div>
+              <p class="leader-index">#${index + 1} ${item.neighborhood || "Sem bairro"}</p>
+              <p class="leader-title">${item.title || "Sem titulo"}</p>
+              <p class="leader-purpose ${purposeClass(item)}">${purposeLabel(item)}</p>
+            </div>
+            <span class="leader-score">${Math.round(Number(item.investment_rank_score || 0))}</span>
+          `;
+          leaderboardList.appendChild(row);
+        });
+      }
+
+      function renderCards(items) {
+        cardsCount.textContent = `${items.length} resultados`;
+        opportunitiesGrid.innerHTML = "";
+
+        items.forEach((item) => {
+          const segmentReferenceM2 = Number(item.segment_median_price_per_m2 || item.segment_mean_price_per_m2 || 0);
+          const marketPrice = segmentReferenceM2 * Number(item.area_total_m2 || 0);
+          const card = document.createElement("article");
+          card.className = "op-card";
+          card.innerHTML = `
+            <div class="op-media-wrap">
+              <img src="${item.image_url || fallbackImage}" alt="${item.title || "Imovel"}" class="op-media" loading="lazy" />
+              <span class="chip chip-neighborhood">${item.neighborhood || "Sem bairro"}</span>
+              <span class="chip chip-purpose ${purposeClass(item)}">${purposeLabel(item)}</span>
+              <span class="chip chip-valuation ${valuationClass(item)}">${valuationLabel(item)}</span>
+              <span class="chip chip-rank">Rank ${Math.round(Number(item.investment_rank_score || 0))}</span>
+            </div>
+            <div class="op-body">
+              <h4>${item.title || "Imovel sem titulo"}</h4>
+              <p class="op-meta">${item.category || "-"} | ${item.city || "-"} | ${purposeLabel(item)}</p>
+              <div class="op-prices">
+                <div>
+                  <p class="label">${estimatedPriceLabel(item)}</p>
+                  <p class="value muted">${toCurrency(marketPrice)}</p>
+                </div>
+                <div>
+                  <p class="label">${inferPurpose(item) === "locacao" ? "Aluguel atual/mês" : "Preco atual"}</p>
+                  <p class="value strong">${toCurrency(item.price)}</p>
+                </div>
+              </div>
+              <div class="op-footer">
+                <span class="discount ${valuationClass(item)}">${valuationLabel(item)}</span>
+                <a href="${item.url || "#"}" target="_blank" rel="noopener noreferrer">Abrir anuncio</a>
+              </div>
+            </div>
+          `;
+          opportunitiesGrid.appendChild(card);
+        });
+      }
+
+      function renderAll() {
+        const filtered = applyFilters();
+        renderChart(filtered);
+        renderMap(filtered);
+        renderLeaderboard(filtered);
+        renderCards(filtered);
+      }
+
+      buildFilters();
+      renderAll();
+
+      [searchFilter, purposeFilter, valuationFilter, categoryFilter, typeFilter].forEach((element) => {
+        element.addEventListener("input", renderAll);
+        element.addEventListener("change", renderAll);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
+.env.*
+.pytest_cache/
+.mypy_cache/
+playwright-report/
+data/
+terraform.tfstate
+terraform.tfstate.*
+.terraform/
+*.log
+.tmp_*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python/build
+dist/
+build/
+*.egg-info/
+
+# Secrets and keys
+*.pem
+*.key
+*.p12
+*.crt
+*.cer
+*.csr
+*.kubeconfig
+id_rsa
+id_rsa.pub
+
+# Terraform sensitive artifacts
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.auto.tfvars
+*.auto.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Keep only Terraform cloud design documentation
+infra/terraform/*
+!infra/terraform/README.md

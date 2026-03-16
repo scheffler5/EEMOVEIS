@@ -1,0 +1,30 @@
+# controle de versão
+.git/
+.gitignore
+
+# dados e volumes locais
+data/
+s3/
+
+# bytecode Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ambientes virtuais
+.venv/
+venv/
+
+# variáveis de ambiente
+.env
+.env.*
+
+# cache de ferramentas
+.pytest_cache/
+.mypy_cache/
+playwright-report/
+
+# infraestrutura e docs (não necessários no container)
+infra/
+README.md

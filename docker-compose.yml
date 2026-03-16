@@ -1,0 +1,103 @@
+services:
+  mongo:
+    build:
+      context: .
+      dockerfile: ./infra/docker/mongo/Dockerfile
+    container_name: eemoveis-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: eemoveis
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  minio:
+    image: minio/minio:latest
+    container_name: eemoveis-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: eemoveis-minio-init
+    depends_on:
+      - minio
+    restart: "no"
+    entrypoint: >-
+      /bin/sh -c '
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
+      mc mb --ignore-existing local/images;
+      mc anonymous set download local/images;
+      '
+
+  scraper:
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    container_name: eemoveis-scraper
+    restart: unless-stopped
+    environment:
+      SCRAPER_INTERVAL_SECONDS: 1800
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: eemoveis
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: images
+      S3_SECURE: "false"
+      S3_PUBLIC_BASE_URL: http://localhost:9000
+      SELETA_PURPOSES: venda,locacao
+      SELETA_MAX_PAGES: 0
+      SELETA_MAX_LISTINGS_PER_PAGE: 0
+      SELETA_TIMEOUT_MS: 45000
+    depends_on:
+      mongo:
+        condition: service_started
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: eemoveis-backend
+    restart: unless-stopped
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: eemoveis
+      ANALYSIS_AUTO_ENABLED: "true"
+      ANALYSIS_AUTO_INTERVAL_SECONDS: 180
+      ANALYSIS_AUTO_DISCOUNT_THRESHOLD: 0.20
+      ANALYSIS_AUTO_MIN_SEGMENT_SIZE: 3
+    depends_on:
+      - mongo
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: eemoveis-frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_BASE_URL: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+
+volumes:
+  mongo_data:
+  minio_data:

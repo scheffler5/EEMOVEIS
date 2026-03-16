@@ -1,0 +1,5 @@
+httpx==0.28.1
+minio==7.2.15
+playwright==1.52.0
+pydantic==2.11.1
+pymongo==4.11.3
